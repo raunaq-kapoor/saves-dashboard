@@ -16,8 +16,8 @@ NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 INSTAGRAM_USERNAME = os.environ["INSTAGRAM_USERNAME"]
 INSTAGRAM_PASSWORD = os.environ["INSTAGRAM_PASSWORD"]
-LINKEDIN_USERNAME = os.environ["LINKEDIN_USERNAME"]
-LINKEDIN_PASSWORD = os.environ["LINKEDIN_PASSWORD"]
+LINKEDIN_LI_AT = os.environ["LINKEDIN_LI_AT"]          # browser cookie
+LINKEDIN_JSESSIONID = os.environ["LINKEDIN_JSESSIONID"]  # browser cookie
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -80,25 +80,23 @@ def get_instagram_saves():
     log.info("Instagram: fetching saved posts...")
     cl = InstaClient()
 
-    # Reuse a saved session to avoid triggering Instagram's security checks.
-    # INSTAGRAM_SESSION is a JSON string exported with cl.get_settings().
-    session_json = os.environ.get("INSTAGRAM_SESSION", "")
-    session_file = "/tmp/ig_session.json"
+    # Use a pre-exported session to avoid triggering Instagram's security challenge.
+    # INSTAGRAM_SESSION is generated once locally via generate_ig_session.py.
+    session_json = os.environ.get("INSTAGRAM_SESSION", "").strip()
+    if not session_json:
+        raise RuntimeError(
+            "INSTAGRAM_SESSION secret is empty. "
+            "Run sync/generate_ig_session.py locally and paste the output into the secret."
+        )
 
-    if session_json:
-        with open(session_file, "w") as f:
-            f.write(session_json)
-        try:
-            cl.load_settings(session_file)
-            cl.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
-            log.info("Instagram: logged in via saved session")
-        except Exception as e:
-            log.warning(f"Instagram: session reload failed ({e}), retrying fresh login")
-            cl = InstaClient()
-            cl.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
-    else:
-        cl.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
-        log.info("Instagram: logged in fresh (no saved session)")
+    session_file = "/tmp/ig_session.json"
+    with open(session_file, "w") as f:
+        f.write(session_json)
+
+    cl.load_settings(session_file)
+    # login() with a loaded session reuses the session rather than doing a fresh auth
+    cl.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
+    log.info("Instagram: logged in via saved session")
 
     saved = cl.user_saved_medias()
     log.info(f"Instagram: {len(saved)} saved posts found")
@@ -118,7 +116,13 @@ def get_instagram_saves():
 
 def get_linkedin_saves():
     log.info("LinkedIn: fetching saved posts...")
-    api = Linkedin(LINKEDIN_USERNAME, LINKEDIN_PASSWORD)
+    # Authenticate via browser cookies to bypass LinkedIn's login challenge.
+    # li_at and JSESSIONID are copied from browser DevTools once and stored as secrets.
+    cookies = {
+        "li_at": LINKEDIN_LI_AT,
+        "JSESSIONID": f'"{LINKEDIN_JSESSIONID}"',
+    }
+    api = Linkedin("", "", cookies=cookies, authenticate=False)
 
     try:
         # LinkedIn Voyager internal endpoint for saved items
