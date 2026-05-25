@@ -14,10 +14,9 @@ log = logging.getLogger(__name__)
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
-INSTAGRAM_USERNAME = os.environ["INSTAGRAM_USERNAME"]
-INSTAGRAM_PASSWORD = os.environ["INSTAGRAM_PASSWORD"]
-LINKEDIN_LI_AT = os.environ["LINKEDIN_LI_AT"]          # browser cookie
-LINKEDIN_JSESSIONID = os.environ["LINKEDIN_JSESSIONID"]  # browser cookie
+INSTAGRAM_SESSIONID = os.environ["INSTAGRAM_SESSIONID"]   # browser cookie
+LINKEDIN_LI_AT = os.environ["LINKEDIN_LI_AT"]             # browser cookie
+LINKEDIN_JSESSIONID = os.environ["LINKEDIN_JSESSIONID"]   # browser cookie
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -80,23 +79,10 @@ def get_instagram_saves():
     log.info("Instagram: fetching saved posts...")
     cl = InstaClient()
 
-    # Use a pre-exported session to avoid triggering Instagram's security challenge.
-    # INSTAGRAM_SESSION is generated once locally via generate_ig_session.py.
-    session_json = os.environ.get("INSTAGRAM_SESSION", "").strip()
-    if not session_json:
-        raise RuntimeError(
-            "INSTAGRAM_SESSION secret is empty. "
-            "Run sync/generate_ig_session.py locally and paste the output into the secret."
-        )
-
-    session_file = "/tmp/ig_session.json"
-    with open(session_file, "w") as f:
-        f.write(session_json)
-
-    cl.load_settings(session_file)
-    # login() with a loaded session reuses the session rather than doing a fresh auth
-    cl.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
-    log.info("Instagram: logged in via saved session")
+    # Authenticate via the sessionid browser cookie — no username/password or
+    # verification codes needed. See SETUP.md for how to get this value.
+    cl.login_by_sessionid(INSTAGRAM_SESSIONID)
+    log.info("Instagram: logged in via session cookie")
 
     saved = cl.user_saved_medias()
     log.info(f"Instagram: {len(saved)} saved posts found")
