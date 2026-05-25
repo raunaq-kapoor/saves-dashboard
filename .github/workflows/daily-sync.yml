@@ -22,7 +22,7 @@ jobs:
 
       - name: Run sync
         env:
-          INSTAGRAM_SESSIONID: ${{ secrets.INSTAGRAM_SESSIONID }}
+          INSTAGRAM_SESSIONID: ${{ secrets.INSTAGRAM_SESSION }}
           LINKEDIN_LI_AT: ${{ secrets.LINKEDIN_LI_AT }}
           LINKEDIN_JSESSIONID: ${{ secrets.LINKEDIN_JSESSIONID }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}

@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
-INSTAGRAM_SESSIONID = os.environ["INSTAGRAM_SESSIONID"]   # browser cookie
+INSTAGRAM_SESSIONID = os.environ["INSTAGRAM_SESSION"]   # browser cookie
 LINKEDIN_LI_AT = os.environ["LINKEDIN_LI_AT"]             # browser cookie
 LINKEDIN_JSESSIONID = os.environ["LINKEDIN_JSESSIONID"]   # browser cookie
 
