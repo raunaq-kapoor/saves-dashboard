@@ -90,6 +90,18 @@ def get_instagram_saves():
         "X-Requested-With": "XMLHttpRequest",
     }
 
+    # Preflight: verify the cookie is accepted before hitting the saved posts endpoint
+    preflight = requests.get(
+        "https://www.instagram.com/api/v1/accounts/current_user/?edit=true",
+        headers=headers,
+        cookies=cookies,
+    )
+    log.info(f"Instagram preflight status = {preflight.status_code}")
+    if preflight.status_code == 200:
+        log.info(f"Instagram preflight body preview = {preflight.text[:200]}")
+    else:
+        log.warning(f"Instagram preflight body preview = {preflight.text[:200]}")
+
     results = []
     next_max_id = None
 
@@ -168,6 +180,15 @@ def get_linkedin_saves():
             '"displayDensity":2,"displayWidth":1920,"displayHeight":1080}'
         ),
     }
+
+    # Preflight: verify auth works before hitting the saved posts endpoint
+    preflight = requests.get(
+        "https://www.linkedin.com/voyager/api/me",
+        headers=headers,
+        cookies=cookies,
+    )
+    log.info(f"LinkedIn preflight status = {preflight.status_code}")
+    log.info(f"LinkedIn preflight body preview = {preflight.text[:200]}")
 
     resp = requests.get(
         "https://www.linkedin.com/voyager/api/contentcollection/updatesV2",
