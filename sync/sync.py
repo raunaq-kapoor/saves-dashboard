@@ -122,7 +122,17 @@ def get_linkedin_saves():
         )
 
         # Newer versions of linkedin-api return a Response object; older return a dict
-        data = response.json() if hasattr(response, "json") else response
+        if hasattr(response, "status_code"):
+            log.info(f"LinkedIn: response status = {response.status_code}")
+        if hasattr(response, "text"):
+            log.info(f"LinkedIn: response body preview = {response.text[:300]}")
+
+        try:
+            data = response.json() if hasattr(response, "json") else response
+        except ValueError as e:
+            log.error(f"LinkedIn: could not parse response as JSON — {e}")
+            return []
+
         elements = data.get("elements", [])
         log.info(f"LinkedIn: {len(elements)} saved items found")
 
