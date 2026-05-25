@@ -79,24 +79,24 @@ def get_instagram_saves():
 
     # Use instagram.com web API — works with the sessionid cookie from the browser.
     # This avoids the mobile API entirely (which rejects web cookies with 467).
-    cookies = {"sessionid": INSTAGRAM_SESSION}
     ua = INSTAGRAM_USERAGENT or (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
-    headers = {
+    session = requests.Session()
+    session.cookies.update({"sessionid": INSTAGRAM_SESSION})
+    session.headers.update({
         "User-Agent": ua,
         "Accept": "*/*",
         "Referer": "https://www.instagram.com/saved/",
         "X-Requested-With": "XMLHttpRequest",
-    }
+        "x-ig-app-id": "936619743392459",
+    })
 
     # Preflight: verify the cookie is accepted before hitting the saved posts endpoint
-    preflight = requests.get(
+    preflight = session.get(
         "https://www.instagram.com/api/v1/accounts/current_user/?edit=true",
-        headers=headers,
-        cookies=cookies,
     )
     log.info(f"Instagram preflight status = {preflight.status_code}")
     if preflight.status_code == 200:
@@ -112,11 +112,9 @@ def get_instagram_saves():
         if next_max_id:
             params["max_id"] = next_max_id
 
-        resp = requests.get(
+        resp = session.get(
             "https://www.instagram.com/api/v1/feed/saved/media/",
             params=params,
-            headers=headers,
-            cookies=cookies,
         )
 
         log.info(f"Instagram: status = {resp.status_code}")
@@ -161,11 +159,10 @@ def get_linkedin_saves():
     log.info("LinkedIn: fetching saved posts...")
 
     csrf = LINKEDIN_JSESSIONID.strip('"')
-    cookies = {
-        "li_at": LINKEDIN_LI_AT,
-        "JSESSIONID": f'"{csrf}"',
-    }
-    headers = {
+    session = requests.Session()
+    session.cookies.set("li_at", LINKEDIN_LI_AT, domain=".linkedin.com")
+    session.cookies.set("JSESSIONID", f'"{csrf}"', domain=".linkedin.com")
+    session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -181,19 +178,27 @@ def get_linkedin_saves():
             '"timezoneOffset":0,"timezone":"UTC","appType":"VOYAGER",'
             '"displayDensity":2,"displayWidth":1920,"displayHeight":1080}'
         ),
-    }
+    })
 
     # Preflight: verify auth works before hitting the saved posts endpoint
-    preflight = requests.get(
+    preflight = session.get(
         "https://www.linkedin.com/voyager/api/me",
-        headers=headers,
-        cookies=cookies,
+        allow_redirects=False,
     )
     log.info(f"LinkedIn preflight status = {preflight.status_code}")
     log.info(f"LinkedIn preflight body preview = {preflight.text[:200]}")
+    if preflight.status_code != 200:
+        raise RuntimeError(
+            f"LinkedIn auth failure (preflight {preflight.status_code}) — "
+            "refresh LINKEDIN_LI_AT and LINKEDIN_JSESSIONID (see SETUP.md Section B)"
+        )
 
     # Try multiple known Voyager endpoints for saved posts
     candidate_endpoints = [
+        (
+            "https://www.linkedin.com/voyager/api/identity/dash/myItems",
+            {"q": "SAVES", "count": 100, "start": 0},
+        ),
         (
             "https://www.linkedin.com/voyager/api/feed/saves",
             {"count": 100, "start": 0},
@@ -206,8 +211,11 @@ def get_linkedin_saves():
 
     data = None
     for url_ep, params in candidate_endpoints:
-        resp = requests.get(url_ep, params=params, headers=headers, cookies=cookies)
+        resp = session.get(url_ep, params=params, allow_redirects=False)
         log.info(f"LinkedIn endpoint {url_ep}: status = {resp.status_code}")
+        if resp.status_code in (301, 302, 303, 307, 308):
+            log.warning(f"LinkedIn: {url_ep} redirected to {resp.headers.get('Location', '?')}")
+            continue
         if resp.status_code in (401, 403):
             raise RuntimeError(
                 f"LinkedIn auth failure ({resp.status_code}) — "
