@@ -4,7 +4,6 @@ from datetime import date
 
 import requests
 from instagrapi import Client as InstaClient
-from linkedin_api import Linkedin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,9 +13,9 @@ log = logging.getLogger(__name__)
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
-INSTAGRAM_SESSIONID = os.environ["INSTAGRAM_SESSION"]   # browser cookie
-LINKEDIN_LI_AT = os.environ["LINKEDIN_LI_AT"]             # browser cookie
-LINKEDIN_JSESSIONID = os.environ["LINKEDIN_JSESSIONID"]   # browser cookie
+INSTAGRAM_SESSIONID = os.environ["INSTAGRAM_SESSION"]    # browser cookie
+LINKEDIN_LI_AT = os.environ["LINKEDIN_LI_AT"]            # browser cookie
+LINKEDIN_JSESSIONID = os.environ["LINKEDIN_JSESSIONID"]  # browser cookie
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -79,8 +78,7 @@ def get_instagram_saves():
     log.info("Instagram: fetching saved posts...")
     cl = InstaClient()
 
-    # Authenticate via the sessionid browser cookie — no username/password or
-    # verification codes needed. See SETUP.md for how to get this value.
+    # Authenticate via the sessionid browser cookie. See SETUP.md to refresh.
     cl.login_by_sessionid(INSTAGRAM_SESSIONID)
     log.info("Instagram: logged in via session cookie")
 
@@ -102,85 +100,82 @@ def get_instagram_saves():
 
 def get_linkedin_saves():
     log.info("LinkedIn: fetching saved posts...")
-    # Authenticate via browser cookies to bypass LinkedIn's login challenge.
-    # li_at and JSESSIONID are copied from browser DevTools once and stored as secrets.
-    cookies = {
-        "li_at": LINKEDIN_LI_AT,
-        "JSESSIONID": f'"{LINKEDIN_JSESSIONID}"',
+
+    # Hit the Voyager API directly with browser cookies — no linkedin-api library
+    # needed, which avoids its cookie-plumbing issues.
+    csrf = LINKEDIN_JSESSIONID.strip('"')
+    session = requests.Session()
+    session.cookies.set("li_at", LINKEDIN_LI_AT, domain=".linkedin.com")
+    session.cookies.set("JSESSIONID", f'"{csrf}"', domain=".linkedin.com")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/vnd.linkedin.normalized+json+2.1",
+        "csrf-token": csrf,
+        "x-restli-protocol-version": "2.0.0",
+        "x-li-lang": "en_US",
     }
-    api = Linkedin("", "", cookies=cookies, authenticate=False)
 
-    try:
-        # LinkedIn Voyager internal endpoint for saved items
-        response = api._fetch(
-            "/identity/dash/lists",
-            params={
-                "count": 100,
-                "listType": "SAVE",
-                "q": "savedItems",
-            },
-        )
+    resp = session.get(
+        "https://www.linkedin.com/voyager/api/identity/dash/lists",
+        params={"count": 100, "listType": "SAVE", "q": "savedItems"},
+        headers=headers,
+    )
 
-        # Newer versions of linkedin-api return a Response object; older return a dict
-        if hasattr(response, "status_code"):
-            log.info(f"LinkedIn: response status = {response.status_code}")
-        if hasattr(response, "text"):
-            log.info(f"LinkedIn: response body preview = {response.text[:300]}")
+    log.info(f"LinkedIn: status = {resp.status_code}")
 
-        try:
-            data = response.json() if hasattr(response, "json") else response
-        except ValueError as e:
-            log.error(f"LinkedIn: could not parse response as JSON — {e}")
-            return []
-
-        elements = data.get("elements", [])
-        log.info(f"LinkedIn: {len(elements)} saved items found")
-
-        # Log the raw shape of the first element so we can debug if needed
-        if elements:
-            log.info(f"LinkedIn: first element keys = {list(elements[0].keys())}")
-
-        results = []
-        for el in elements:
-            # LinkedIn's response shape can vary; try several known field paths
-            url = (
-                el.get("entityUrl")
-                or el.get("navigationUrl")
-                or (el.get("savedContent") or {}).get("canonicalUrl")
-                or ""
-            )
-            title_field = el.get("title", "")
-            title = (
-                title_field.get("text", "") if isinstance(title_field, dict)
-                else str(title_field)
-            )
-            if url:
-                results.append({
-                    "url": url,
-                    "title": title[:150],
-                    "source": "LinkedIn",
-                })
-            else:
-                log.warning(f"LinkedIn: could not extract URL from element: {el}")
-
-        return results
-
-    except Exception as e:
-        log.error(f"LinkedIn: fetch failed — {e}")
+    if resp.status_code == 401 or resp.status_code == 403:
+        log.error("LinkedIn: cookies rejected — refresh LINKEDIN_LI_AT and LINKEDIN_JSESSIONID (see SETUP.md)")
         return []
+
+    if resp.status_code != 200:
+        log.error(f"LinkedIn: unexpected status {resp.status_code}. Body: {resp.text[:300]}")
+        return []
+
+    data = resp.json()
+    elements = data.get("elements", [])
+    log.info(f"LinkedIn: {len(elements)} saved items found")
+
+    if elements:
+        log.info(f"LinkedIn: first element keys = {list(elements[0].keys())}")
+
+    results = []
+    for el in elements:
+        url = (
+            el.get("entityUrl")
+            or el.get("navigationUrl")
+            or (el.get("savedContent") or {}).get("canonicalUrl")
+            or ""
+        )
+        title_field = el.get("title", "")
+        title = (
+            title_field.get("text", "") if isinstance(title_field, dict)
+            else str(title_field)
+        )
+        if url:
+            results.append({"url": url, "title": title[:150], "source": "LinkedIn"})
+        else:
+            log.warning(f"LinkedIn: no URL found in element — {list(el.keys())}")
+
+    return results
 
 
 # ---------- Main ----------
 
 def main():
     existing_urls = get_existing_urls()
-
     all_saves = []
 
     try:
         all_saves += get_instagram_saves()
     except Exception as e:
         log.error(f"Instagram sync failed: {e}")
+        if "467" in str(e):
+            log.error("Instagram 467 = session cookie rejected. Refresh INSTAGRAM_SESSION in GitHub secrets (see SETUP.md Section A).")
 
     try:
         all_saves += get_linkedin_saves()
