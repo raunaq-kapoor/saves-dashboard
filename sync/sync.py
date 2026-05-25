@@ -12,7 +12,8 @@ log = logging.getLogger(__name__)
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
-INSTAGRAM_SESSION = os.environ["INSTAGRAM_SESSION"]      # sessionid cookie from instagram.com
+INSTAGRAM_SESSION = os.environ["INSTAGRAM_SESSION"]       # sessionid cookie from instagram.com
+INSTAGRAM_USERAGENT = os.environ.get("INSTAGRAM_USERAGENT", "")  # exact UA from your browser
 LINKEDIN_LI_AT = os.environ["LINKEDIN_LI_AT"]            # li_at cookie from linkedin.com
 LINKEDIN_JSESSIONID = os.environ["LINKEDIN_JSESSIONID"]  # JSESSIONID cookie from linkedin.com
 
@@ -79,12 +80,13 @@ def get_instagram_saves():
     # Use instagram.com web API — works with the sessionid cookie from the browser.
     # This avoids the mobile API entirely (which rejects web cookies with 467).
     cookies = {"sessionid": INSTAGRAM_SESSION}
+    ua = INSTAGRAM_USERAGENT or (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": ua,
         "Accept": "*/*",
         "Referer": "https://www.instagram.com/saved/",
         "X-Requested-With": "XMLHttpRequest",
@@ -190,26 +192,36 @@ def get_linkedin_saves():
     log.info(f"LinkedIn preflight status = {preflight.status_code}")
     log.info(f"LinkedIn preflight body preview = {preflight.text[:200]}")
 
-    resp = requests.get(
-        "https://www.linkedin.com/voyager/api/contentcollection/updatesV2",
-        params={"q": "savedItems", "count": 100, "start": 0},
-        headers=headers,
-        cookies=cookies,
-    )
+    # Try multiple known Voyager endpoints for saved posts
+    candidate_endpoints = [
+        (
+            "https://www.linkedin.com/voyager/api/feed/saves",
+            {"count": 100, "start": 0},
+        ),
+        (
+            "https://www.linkedin.com/voyager/api/contentcollection/updatesV2",
+            {"q": "savedItems", "count": 100, "start": 0},
+        ),
+    ]
 
-    log.info(f"LinkedIn: status = {resp.status_code}")
+    data = None
+    for url_ep, params in candidate_endpoints:
+        resp = requests.get(url_ep, params=params, headers=headers, cookies=cookies)
+        log.info(f"LinkedIn endpoint {url_ep}: status = {resp.status_code}")
+        if resp.status_code in (401, 403):
+            raise RuntimeError(
+                f"LinkedIn auth failure ({resp.status_code}) — "
+                "refresh LINKEDIN_LI_AT and LINKEDIN_JSESSIONID (see SETUP.md Section B)"
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            log.info(f"LinkedIn: using endpoint {url_ep}")
+            break
+        log.warning(f"LinkedIn: {url_ep} → {resp.status_code}: {resp.text[:200]}")
 
-    if resp.status_code in (401, 403):
-        raise RuntimeError(
-            f"LinkedIn auth failure ({resp.status_code}) — "
-            "refresh LINKEDIN_LI_AT and LINKEDIN_JSESSIONID (see SETUP.md Section B)"
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"LinkedIn unexpected status {resp.status_code}: {resp.text[:300]}"
-        )
+    if data is None:
+        raise RuntimeError("LinkedIn: no working saved-posts endpoint found — see logs above")
 
-    data = resp.json()
     elements = data.get("elements", [])
     log.info(f"LinkedIn: {len(elements)} saved items found")
 
@@ -218,14 +230,17 @@ def get_linkedin_saves():
 
     results = []
     for el in elements:
+        # Voyager wraps entities differently depending on the endpoint version
+        inner = el.get("value") or el.get("savedContent") or el
         url = (
             el.get("entityUrl")
             or el.get("navigationUrl")
-            or (el.get("value") or {}).get("entityUrl")
-            or (el.get("savedContent") or {}).get("canonicalUrl")
+            or inner.get("entityUrl")
+            or inner.get("navigationUrl")
+            or inner.get("canonicalUrl")
             or ""
         )
-        title_field = el.get("title", "")
+        title_field = el.get("title") or inner.get("title") or ""
         title = (
             title_field.get("text", "") if isinstance(title_field, dict)
             else str(title_field)
