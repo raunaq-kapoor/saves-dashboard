@@ -159,10 +159,11 @@ def get_linkedin_saves():
     log.info("LinkedIn: fetching saved posts...")
 
     csrf = LINKEDIN_JSESSIONID.strip('"')
-    session = requests.Session()
-    session.cookies.set("li_at", LINKEDIN_LI_AT, domain=".linkedin.com")
-    session.cookies.set("JSESSIONID", f'"{csrf}"', domain=".linkedin.com")
-    session.headers.update({
+    cookies = {
+        "li_at": LINKEDIN_LI_AT,
+        "JSESSIONID": f'"{csrf}"',
+    }
+    headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -178,12 +179,13 @@ def get_linkedin_saves():
             '"timezoneOffset":0,"timezone":"UTC","appType":"VOYAGER",'
             '"displayDensity":2,"displayWidth":1920,"displayHeight":1080}'
         ),
-    })
+    }
 
-    # Preflight: verify auth works before hitting the saved posts endpoint
-    preflight = session.get(
+    # Preflight: verify auth works (allow redirects so we get the real response)
+    preflight = requests.get(
         "https://www.linkedin.com/voyager/api/me",
-        allow_redirects=False,
+        headers=headers,
+        cookies=cookies,
     )
     log.info(f"LinkedIn preflight status = {preflight.status_code}")
     log.info(f"LinkedIn preflight body preview = {preflight.text[:200]}")
@@ -193,7 +195,8 @@ def get_linkedin_saves():
             "refresh LINKEDIN_LI_AT and LINKEDIN_JSESSIONID (see SETUP.md Section B)"
         )
 
-    # Try multiple known Voyager endpoints for saved posts
+    # Try multiple known Voyager endpoints for saved posts.
+    # allow_redirects=False prevents infinite redirect loops to the login page.
     candidate_endpoints = [
         (
             "https://www.linkedin.com/voyager/api/identity/dash/myItems",
@@ -211,7 +214,7 @@ def get_linkedin_saves():
 
     data = None
     for url_ep, params in candidate_endpoints:
-        resp = session.get(url_ep, params=params, allow_redirects=False)
+        resp = requests.get(url_ep, params=params, headers=headers, cookies=cookies, allow_redirects=False)
         log.info(f"LinkedIn endpoint {url_ep}: status = {resp.status_code}")
         if resp.status_code in (301, 302, 303, 307, 308):
             log.warning(f"LinkedIn: {url_ep} redirected to {resp.headers.get('Location', '?')}")
