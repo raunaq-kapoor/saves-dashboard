@@ -121,7 +121,9 @@ def get_linkedin_saves():
             },
         )
 
-        elements = response.get("elements", [])
+        # Newer versions of linkedin-api return a Response object; older return a dict
+        data = response.json() if hasattr(response, "json") else response
+        elements = data.get("elements", [])
         log.info(f"LinkedIn: {len(elements)} saved items found")
 
         # Log the raw shape of the first element so we can debug if needed
